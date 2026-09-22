@@ -1,0 +1,17 @@
+D:\project\campus-ticket\src\main\java\com\campus\ticket\CampusTicketApplication.java
+D:\project\campus-ticket\src\main\java\com\campus\ticket\controller\ActivityController.java
+D:\project\campus-ticket\src\main\java\com\campus\ticket\controller\HealthController.java
+D:\project\campus-ticket\src\main\java\com\campus\ticket\controller\RegistrationController.java
+D:\project\campus-ticket\src\main\java\com\campus\ticket\controller\UserRegistrationController.java
+D:\project\campus-ticket\src\main\java\com\campus\ticket\dto\ErrorResponse.java
+D:\project\campus-ticket\src\main\java\com\campus\ticket\dto\PageResult.java
+D:\project\campus-ticket\src\main\java\com\campus\ticket\dto\RegistrationDetail.java
+D:\project\campus-ticket\src\main\java\com\campus\ticket\entity\Activity.java
+D:\project\campus-ticket\src\main\java\com\campus\ticket\entity\Registration.java
+D:\project\campus-ticket\src\main\java\com\campus\ticket\exception\BusinessException.java
+D:\project\campus-ticket\src\main\java\com\campus\ticket\exception\GlobalExceptionHandler.java
+D:\project\campus-ticket\src\main\java\com\campus\ticket\mapper\ActivityMapper.java
+D:\project\campus-ticket\src\main\java\com\campus\ticket\mapper\RegistrationMapper.java
+D:\project\campus-ticket\src\main\java\com\campus\ticket\mapper\UserMapper.java
+D:\project\campus-ticket\src\main\java\com\campus\ticket\service\ActivityService.java
+D:\project\campus-ticket\src\main\java\com\campus\ticket\service\RegistrationService.java
