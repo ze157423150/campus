@@ -1,0 +1,11 @@
+com\campus\ticket\controller\ActivityRegistrationController.class
+com\campus\ticket\dto\RegistrationRosterItem.class
+com\campus\ticket\dto\UpdateProfileRequest.class
+com\campus\ticket\constants\RedisConstants.class
+com\campus\ticket\service\RegistrationQueryService.class
+com\campus\ticket\service\UserService.class
+com\campus\ticket\dto\ChangePasswordRequest.class
+com\campus\ticket\dto\RegisterRequest.class
+com\campus\ticket\mapper\RegistrationQueryMapper.class
+com\campus\ticket\security\CredentialFingerprint.class
+com\campus\ticket\controller\UserController.class

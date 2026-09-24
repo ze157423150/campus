@@ -1,0 +1,52 @@
+@baseUrl = http://localhost:8081
+@adminToken = REPLACE_WITH_ADMIN_TOKEN
+@studentToken = REPLACE_WITH_STUDENT_TOKEN
+
+### 创建草稿：发送前调整日期；返回ID自动保存
+POST {{baseUrl}}/activities
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{"title":"校园篮球赛","category":"SPORTS","location":"体育馆","startTime":"2026-10-10T14:00:00","endTime":"2026-10-10T17:00:00","registrationStartTime":"2026-09-24T08:00:00","registrationEndTime":"2026-10-09T18:00:00","totalQuota":10}
+
+> {% client.test("创建成功", function () { client.assert(response.status === 201); }); if (response.status === 201) client.global.set("demoActivityId", response.body.activityId); %}
+
+### 查看草稿
+GET {{baseUrl}}/activities/{{demoActivityId}}/management
+Authorization: Bearer {{adminToken}}
+
+### 发布
+POST {{baseUrl}}/activities/{{demoActivityId}}/publish
+Authorization: Bearer {{adminToken}}
+
+### 搜索
+GET {{baseUrl}}/activities?keyword=篮球&category=SPORTS&registrationPhase=OPEN
+
+### 详情
+GET {{baseUrl}}/activities/{{demoActivityId}}
+
+### 报名；重复发送返回409
+POST {{baseUrl}}/activities/{{demoActivityId}}/registrations
+Authorization: Bearer {{studentToken}}
+
+> {% if (response.status === 200) client.global.set("demoRegistrationId", response.body.registrationId); %}
+
+### 我的报名
+GET {{baseUrl}}/users/me/registrations?status=REGISTERED
+Authorization: Bearer {{studentToken}}
+
+### 查看名单
+GET {{baseUrl}}/activities/{{demoActivityId}}/registrations
+Authorization: Bearer {{adminToken}}
+
+### 个人取消；重复发送仍成功
+POST {{baseUrl}}/activities/registrations/{{demoRegistrationId}}/cancel
+Authorization: Bearer {{studentToken}}
+
+### 可回到报名请求验证重新报名，然后取消整个活动
+POST {{baseUrl}}/activities/{{demoActivityId}}/cancel
+Authorization: Bearer {{adminToken}}
+
+### 验证活动已取消、remainingQuota恢复；学生详情此时返回404
+GET {{baseUrl}}/activities/{{demoActivityId}}/management
+Authorization: Bearer {{adminToken}}

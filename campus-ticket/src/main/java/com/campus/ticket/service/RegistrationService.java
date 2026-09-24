@@ -3,10 +3,12 @@ package com.campus.ticket.service;
 import com.campus.ticket.dto.RegistrationDetail;
 import com.campus.ticket.entity.Activity;
 import com.campus.ticket.entity.Registration;
+import com.campus.ticket.event.ActivityChangedEvent;
 import com.campus.ticket.exception.BusinessException;
 import com.campus.ticket.mapper.ActivityMapper;
 import com.campus.ticket.mapper.RegistrationMapper;
 import com.campus.ticket.mapper.UserMapper;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -21,12 +23,13 @@ public class RegistrationService {
     private final UserMapper userMapper;
     private final ActivityMapper activityMapper;
     private final RegistrationMapper registrationMapper;
+    private final ApplicationEventPublisher eventPublisher;
 
-
-    public RegistrationService(UserMapper userMapper, ActivityMapper activityMapper, RegistrationMapper registrationMapper) {
+    public RegistrationService(UserMapper userMapper, ActivityMapper activityMapper, RegistrationMapper registrationMapper, ApplicationEventPublisher eventPublisher) {
         this.userMapper = userMapper;
         this.activityMapper = activityMapper;
         this.registrationMapper = registrationMapper;
+        this.eventPublisher = eventPublisher;
     }
 
     @Transactional
@@ -43,6 +46,7 @@ public class RegistrationService {
                     "用户不存在"
             );
         }
+
         Activity activity = activityMapper.findByIdForUpdate(activityId);
         if(activity == null){
             throw new BusinessException(
@@ -51,6 +55,15 @@ public class RegistrationService {
                     "活动不存在"
             );
         }
+
+        if (!"PUBLISHED".equals(activity.getStatus())) {
+            throw new BusinessException(
+                    HttpStatus.CONFLICT,
+                    "ACTIVITY_NOT_PUBLISHED",
+                    "活动未发布或已取消，不能报名"
+            );
+        }
+
         LocalDateTime now = LocalDateTime.now();
         if (now.isBefore(activity.getRegistrationStartTime())) {
             throw new BusinessException(
@@ -68,8 +81,7 @@ public class RegistrationService {
             );
         }
         // 已持有活动行锁，再读取报名的最新状态
-        Registration existing =
-                registrationMapper.findByUserAndActivityForUpdate(userId, activityId);
+        Registration existing = registrationMapper.findByUserAndActivityForUpdate(userId, activityId);
 
         if (existing != null) {
             if ("REGISTERED".equals(existing.getStatus())) {
@@ -110,7 +122,7 @@ public class RegistrationService {
                         "报名状态已变化，请重新查询"
                 );
             }
-
+            eventPublisher.publishEvent(new ActivityChangedEvent(activityId));
             return existing.getId();
         }
 
@@ -129,7 +141,7 @@ public class RegistrationService {
                     e
             );
         }
-
+        eventPublisher.publishEvent(new ActivityChangedEvent(activityId));
         return registration.getId();
     }
 
@@ -218,5 +230,6 @@ public class RegistrationService {
                     "名额归还失败，请联系管理员检查"
             );
         }
+        eventPublisher.publishEvent(new ActivityChangedEvent(registration.getActivityId()));
     }
 }

@@ -15,4 +15,5 @@ public class RegistrationDetail {
     private LocalDateTime registrationTime;
     private String status;
     private LocalDateTime cancelTime;
+    private String activityStatus;
 }

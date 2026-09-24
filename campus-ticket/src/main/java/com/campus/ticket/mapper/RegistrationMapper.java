@@ -20,6 +20,7 @@ public interface RegistrationMapper {
             r.id AS registration_id,
             a.id AS activity_id,
             a.title AS activity_title,
+            a.status AS activity_status,
             a.location,
             a.start_time,
             r.create_time AS registration_time,
@@ -74,4 +75,13 @@ public interface RegistrationMapper {
           AND status = 'CANCELLED'
         """)
     int reactivate(@Param("registrationId") Long registrationId);
+
+    @Update("""
+        UPDATE registration
+        SET status = 'CANCELLED',
+            cancel_time = NOW()
+        WHERE activity_id = #{activityId}
+          AND status = 'REGISTERED'
+        """)
+    int cancelAllByActivityId(@Param("activityId") Long activityId);
 }

@@ -1,0 +1,64 @@
+@baseUrl = http://localhost:8081
+@studentNo = 20260003
+@name = 王同学
+@password = CampusTest123!
+@newPassword = NewCampusTest456!
+@activityId = 9
+# 管理员Token需手动填写，勿保存真实凭据到版本库
+@adminToken = REPLACE_WITH_ADMIN_TOKEN
+
+### 注册（学号已存在时返回409，换一个未使用的测试学号）
+POST {{baseUrl}}/auth/register
+Content-Type: application/json
+
+{"studentNo":"{{studentNo}}","name":"{{name}}","password":"{{password}}"}
+
+### 登录并保存Token到IDEA HTTP Client变量
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{"studentNo":"{{studentNo}}","password":"{{password}}"}
+
+> {% client.global.set("studentToken", response.body.token); %}
+
+### 个人资料
+GET {{baseUrl}}/users/me
+Authorization: Bearer {{studentToken}}
+
+### 修改姓名
+PUT {{baseUrl}}/users/me
+Authorization: Bearer {{studentToken}}
+Content-Type: application/json
+
+{"name":"新的姓名"}
+
+### 我的报名：现在返回分页对象
+GET {{baseUrl}}/users/me/registrations?page=1&pageSize=10&status=REGISTERED
+Authorization: Bearer {{studentToken}}
+
+### 管理员查看报名名单
+GET {{baseUrl}}/activities/{{activityId}}/registrations?page=1&pageSize=10
+Authorization: Bearer {{adminToken}}
+
+### 学生访问名单应返回403
+GET {{baseUrl}}/activities/{{activityId}}/registrations
+Authorization: Bearer {{studentToken}}
+
+### 修改密码：执行后所有旧Token失效
+PUT {{baseUrl}}/users/me/password
+Authorization: Bearer {{studentToken}}
+Content-Type: application/json
+
+{"oldPassword":"{{password}}","newPassword":"{{newPassword}}"}
+
+### 使用旧Token：应返回401
+GET {{baseUrl}}/users/me
+Authorization: Bearer {{studentToken}}
+
+### 用新密码重新登录
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{"studentNo":"{{studentNo}}","password":"{{newPassword}}"}
+
+> {% client.global.set("studentToken", response.body.token); %}
