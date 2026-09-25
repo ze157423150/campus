@@ -1,0 +1,9 @@
+### 发送Kafka测试消息
+POST http://localhost:8081/kafka-demo/messages
+Authorization: Bearer 替换为管理员登录后返回的Token
+Content-Type: application/json
+
+{
+  "key": "activity-1",
+  "message": "Java发送的第一条消息"
+}

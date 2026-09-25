@@ -1,7 +1,10 @@
 package com.campus.ticket.service;
 
+import com.campus.ticket.cache.ActivityCacheStore;
+import com.campus.ticket.cache.ActivityRefreshDispatcher;
 import com.campus.ticket.constants.RedisConstants;
 import com.campus.ticket.context.UserHolder;
+import com.campus.ticket.dto.ActivityCacheData;
 import com.campus.ticket.dto.CreateActivityRequest;
 import com.campus.ticket.dto.PageResult;
 import com.campus.ticket.entity.Activity;
@@ -11,6 +14,8 @@ import com.campus.ticket.mapper.ActivityMapper;
 import com.campus.ticket.mapper.RegistrationMapper;
 import lombok.RequiredArgsConstructor;
 import org.apache.coyote.OutputBuffer;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpStatus;
@@ -18,9 +23,13 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
 
 @Service
 @RequiredArgsConstructor
@@ -29,25 +38,11 @@ public class ActivityService {
     private final ActivityMapper activityMapper;
     private final StringRedisTemplate stringRedisTemplate;
     private final JsonMapper jsonMapper;
-    private static final int CACHE_LOCK_COUNT = 64;
-    private final Object[] cacheRebuildLocks = createCacheRebuildLocks();
     private final ApplicationEventPublisher eventPublisher;
     private final RegistrationMapper registrationMapper;
-
-
-    private Object[] createCacheRebuildLocks() {
-        Object[] locks = new Object[CACHE_LOCK_COUNT];
-
-        for (int i = 0; i < locks.length; i++) {
-            locks[i] = new Object();
-        }
-        return locks;
-    }
-
-    private Object getCacheRebuildLock(Long activityId){
-        int index = Math.floorMod(Long.hashCode(activityId),CACHE_LOCK_COUNT);
-        return cacheRebuildLocks[index];
-    }
+    private final RedissonClient redissonClient;
+    private final ActivityRefreshDispatcher activityRefreshDispatcher;
+    private final ActivityCacheStore activityCacheStore;
 
     public Activity findById(Long id) {
         if (id == null || id <= 0) {
@@ -58,38 +53,131 @@ public class ActivityService {
             );
         }
 
-        String key = RedisConstants.ACTIVITY_DETAIL_KEY_PREFIX + id;
-        String cacheJson = stringRedisTemplate.opsForValue().get(key);
+        String cacheKey  = RedisConstants.ACTIVITY_DETAIL_KEY_PREFIX + id;
+        String cacheJson = stringRedisTemplate.opsForValue().get(cacheKey);
         if(cacheJson !=null){
-            return readCachedActivity(cacheJson);
+            return readCachedActivity(id,cacheJson);
         }
 
-        synchronized (getCacheRebuildLock(id)) {
-            cacheJson = stringRedisTemplate.opsForValue().get(key);
+        String lockKey = RedisConstants.ACTIVITY_REBUILD_LOCK_PREFIX + id;
+        RLock lock = redissonClient.getLock(lockKey);
+        boolean acquired = false;
 
-            if (cacheJson!=null) {
-                return readCachedActivity(cacheJson);
+
+        try {
+            acquired = lock.tryLock(RedisConstants.ACTIVITY_REBUILD_LOCK_WAIT.toMillis(), TimeUnit.MILLISECONDS);
+            if(!acquired){
+                cacheJson = stringRedisTemplate.opsForValue().get(cacheKey);
+                if(cacheJson != null){
+                    return  readCachedActivity(id,cacheJson);
+                }
+                throw new BusinessException(
+                        HttpStatus.SERVICE_UNAVAILABLE,
+                        "ACTIVITY_CACHE_BUSY",
+                        "活动查询繁忙，请稍后重试"
+                );
             }
+            cacheJson = stringRedisTemplate.opsForValue().get(cacheKey);
+            if(cacheJson!= null){
+                return readCachedActivity(id,cacheJson);
+            }
+            String expectedVersion = activityCacheStore.getVersion(id);
             Activity activity = activityMapper.findById(id);
-            if (activity == null) {
-                stringRedisTemplate.opsForValue().set(key, RedisConstants.CACHE_NULL_VALUE, RedisConstants.ACTIVITY_NULL_TTL);
-                return null;
-            }
-
-            stringRedisTemplate.opsForValue().set(key, jsonMapper.writeValueAsString(activity), RedisConstants.ACTIVITY_DETAIL_TTL);
+            writeActivityCache(id, activity,expectedVersion);
             return activity;
 
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+
+            throw new BusinessException(
+                    HttpStatus.SERVICE_UNAVAILABLE,
+                    "REQUEST_INTERRUPTED",
+                    "请求等待被中断，请重试"
+            );
+        } finally {
+            if(acquired && lock.isHeldByCurrentThread()){
+                lock.unlock();
+            }
+        }
+    }
+
+    public void writeActivityCache(Long activityId,Activity activity,String expectedVersion){
+        if (activity == null) {
+            activityCacheStore.writeIfVersionMatches(
+                    activityId,
+                    expectedVersion,
+                    RedisConstants.CACHE_NULL_VALUE,
+                    RedisConstants.ACTIVITY_NULL_TTL
+            );
+            return;
         }
 
+        long jitterSeconds = ThreadLocalRandom.current().nextLong(RedisConstants.ACTIVITY_DETAIL_TTL_JITTER.toSeconds() + 1);
+        Duration logicalTtl = RedisConstants.ACTIVITY_DETAIL_TTL.plusSeconds(jitterSeconds);
+        Instant expireAt = Instant.now().plus(logicalTtl);
+
+        ActivityCacheData cacheData = new ActivityCacheData(activity, expireAt);
+        String cacheJson = jsonMapper.writeValueAsString(cacheData);
+
+        activityCacheStore.writeIfVersionMatches(
+                activityId,
+                expectedVersion,
+                cacheJson,
+                RedisConstants.ACTIVITY_DETAIL_PHYSICAL_TTL
+        );
 
     }
 
-    public Activity readCachedActivity(String cacheJson){
+    public Activity readCachedActivity(Long activityId,String cacheJson){
         if (RedisConstants.CACHE_NULL_VALUE.equals(cacheJson)) {
             return null;
         }
 
-        return jsonMapper.readValue(cacheJson, Activity.class);
+        ActivityCacheData cacheData = jsonMapper.readValue(cacheJson, ActivityCacheData.class);
+        if(!Instant.now().isBefore(cacheData.getExpireAt())){
+            activityRefreshDispatcher.submit(activityId,()->{
+                refreshActivityCache(activityId);
+            });
+        }
+
+        return cacheData.getData();
+    }
+
+    private void refreshActivityCache(Long activityId){
+        String lockKey = RedisConstants.ACTIVITY_REBUILD_LOCK_PREFIX + activityId;
+        RLock lock = redissonClient.getLock(lockKey);
+        boolean acquired = false;
+
+        try {
+            // 后台任务只尝试获取一次，不等待其他刷新任务
+            acquired = lock.tryLock();
+
+            if (!acquired) {
+                return;
+            }
+
+            String cacheKey = RedisConstants.ACTIVITY_DETAIL_KEY_PREFIX + activityId;
+            String cacheJson = stringRedisTemplate.opsForValue().get(cacheKey);
+
+            // 排队期间缓存可能被删除，或已变为空值缓存
+            if (cacheJson == null || RedisConstants.CACHE_NULL_VALUE.equals(cacheJson)) {
+                return;
+            }
+
+            ActivityCacheData cacheData = jsonMapper.readValue(cacheJson, ActivityCacheData.class);
+
+            // 其他实例可能已经刷新过，再次检查逻辑过期时间
+            if (Instant.now().isBefore(cacheData.getExpireAt())) {
+                return;
+            }
+            String expectedVersion = activityCacheStore.getVersion(activityId);
+            Activity activity = activityMapper.findById(activityId);
+            writeActivityCache(activityId, activity,expectedVersion);
+        } finally {
+            if (acquired && lock.isHeldByCurrentThread()) {
+                lock.unlock();
+            }
+        }
     }
 
     @Transactional(readOnly = true)

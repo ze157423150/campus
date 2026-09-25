@@ -1,5 +1,6 @@
 package com.campus.ticket.listener;
 
+import com.campus.ticket.cache.ActivityCacheStore;
 import com.campus.ticket.constants.RedisConstants;
 import com.campus.ticket.event.ActivityChangedEvent;
 import lombok.RequiredArgsConstructor;
@@ -15,15 +16,13 @@ import org.springframework.transaction.event.TransactionalEventListener;
 @RequiredArgsConstructor
 public class ActivityCacheListener {
 
-    private final StringRedisTemplate stringRedisTemplate;
+    private final ActivityCacheStore activityCacheStore;
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void handleActivityChanged(ActivityChangedEvent event) {
-        String key =
-                RedisConstants.ACTIVITY_DETAIL_KEY_PREFIX + event.activityId();
 
         try {
-            stringRedisTemplate.delete(key);
+            activityCacheStore.invalidate(event.activityId());
         } catch (DataAccessException e) {
             log.error(
                     "活动详情缓存删除失败，activityId={}",
