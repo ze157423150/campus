@@ -56,6 +56,27 @@ public interface BookingMapper
     @Update("UPDATE booking_order SET redis_dirty=0 WHERE order_id=#{id} AND status IN ('FAILED','CANCELLED')")
     void clean(String id);
 
+    @Select("""
+        SELECT order_id
+        FROM booking_order
+        WHERE redis_dirty = 1
+          AND status IN ('FAILED', 'CANCELLED')
+          AND next_check_time <= NOW(3)
+        ORDER BY next_check_time, order_id
+        LIMIT #{batchSize}
+        """)
+    List<String> findDueRedisSyncOrders(@Param("batchSize") int batchSize);
+
+    @Update("""
+        UPDATE booking_order
+        SET next_check_time = TIMESTAMPADD(SECOND, #{retrySeconds}, NOW(3))
+        WHERE order_id = #{orderId}
+          AND redis_dirty = 1
+          AND status IN ('FAILED', 'CANCELLED')
+          AND next_check_time <= NOW(3)
+        """)
+    int claimRedisSync(@Param("orderId") String orderId, @Param("retrySeconds") int retrySeconds);
+
     @Select("SELECT * FROM booking_order WHERE activity_id=#{id} AND status IN ('NEW','PENDING') FOR UPDATE")
     List<BookingOrder> activeOrders(Long id);
 
@@ -76,4 +97,57 @@ public interface BookingMapper
 
     @Select("SELECT COUNT(*) FROM booking_order WHERE activity_id=#{id} AND status IN ('NEW','PENDING')")
     long pending(Long id);
+
+    @Select("""
+        SELECT epoch
+        FROM booking_inventory
+        WHERE activity_id = #{activityId}
+        FOR UPDATE
+        """)
+    Long findEpochForUpdate(@Param("activityId") Long activityId);
+    @Select("""
+        SELECT id
+        FROM activity
+        WHERE id > #{cursor}
+        ORDER BY id
+        LIMIT 20
+        """)
+    List<Long> findDispatchActivityIds(@Param("cursor") long cursor);
+
+    @Insert("""
+        INSERT INTO booking_order (
+            order_id, user_id, activity_id, request_key,
+            epoch, status, registration_id, accepted_at, expires_at
+        )
+        VALUES (
+            #{orderId}, #{userId}, #{activityId}, #{requestKey},
+            #{epoch}, 'SUCCEEDED', #{registrationId}, #{acceptedAt}, #{expiresAt}
+        )
+        """)
+    int insertSucceeded(BookingOrder order);
+
+    @Insert("""
+        INSERT INTO booking_order (
+            order_id, user_id, activity_id, request_key,
+            epoch, status, accepted_at, expires_at,
+            failure_code, redis_dirty
+        )
+        VALUES (
+            #{orderId}, #{userId}, #{activityId}, #{requestKey},
+            #{epoch}, 'FAILED', #{acceptedAt}, #{expiresAt},
+            'EXPIRED', 1
+        )
+        """)
+    int insertExpired(BookingOrder order);
+
+    @Update("""
+        UPDATE booking_order
+        SET status = 'CANCELLED',
+            redis_dirty = 1,
+            next_check_time = NOW(3),
+            update_time = NOW(3)
+        WHERE order_id = #{orderId}
+          AND status = 'SUCCEEDED'
+        """)
+    int cancelSucceeded(@Param("orderId") String orderId);
 }

@@ -52,4 +52,21 @@ public class GlobalExceptionHandler {
 
         return ResponseEntity.badRequest().body(body);
     }
+    @ExceptionHandler(RateLimitException.class)
+    public ResponseEntity<ErrorResponse> handleRateLimitException(RateLimitException exception)
+    {
+        long retryAfterMillis = exception.getRetryAfterMillis();
+        long retryAfterSeconds = retryAfterMillis / 1000;
+
+        if (retryAfterMillis % 1000 != 0)
+        {
+            retryAfterSeconds++;
+        }
+
+        ErrorResponse body = new ErrorResponse(exception.getCode(), exception.getMessage());
+
+        return ResponseEntity.status(exception.getStatus())
+                .header("Retry-After", Long.toString(retryAfterSeconds))
+                .body(body);
+    }
 }

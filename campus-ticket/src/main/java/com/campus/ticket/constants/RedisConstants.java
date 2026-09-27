@@ -21,6 +21,30 @@ public final class RedisConstants {
     // 获取缓存重建锁时，最多等待多久
     public static final Duration ACTIVITY_REBUILD_LOCK_WAIT = Duration.ofSeconds(2);
     public static final Duration ACTIVITY_DETAIL_PHYSICAL_TTL = Duration.ofMinutes(2);
+    public static final String BOOKING_KEY_PREFIX = "campus:booking:";
+
+    public static String bookingInventoryKey(Long activityId)
+    {
+        return BOOKING_KEY_PREFIX + "{" + activityId + "}:inventory";
+    }
+
+    public static String bookingRequestsKey(Long activityId)
+    {
+        return BOOKING_KEY_PREFIX + "{" + activityId + "}:requests";
+    }
+
+    public static String bookingPendingKey(Long activityId)
+    {
+        return BOOKING_KEY_PREFIX + "{" + activityId + "}:pending";
+    }
+    // 申请的业务处理时限，不是 Redis key 的过期时间
+    public static final Duration BOOKING_PROCESSING_TIMEOUT = Duration.ofMinutes(2);
     private RedisConstants() {
     }
+
+    public static final Duration BOOKING_DISPATCH_RETRY_INTERVAL = Duration.ofSeconds(30);
+
+    public static final String RATE_LIMIT_SLIDING_KEY_PREFIX = "campus:rate-limit:sliding:";
+
+    public static final String RATE_LIMIT_BUCKET_KEY_PREFIX = "campus:rate-limit:bucket:";
 }
