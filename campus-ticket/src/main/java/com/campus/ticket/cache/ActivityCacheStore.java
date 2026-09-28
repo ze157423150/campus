@@ -20,7 +20,7 @@ public class ActivityCacheStore {
 
     private static final DefaultRedisScript<Long> WRITE_SCRIPT = loadScript("lua/write_activity_cache.lua");
     private static final DefaultRedisScript<Long> INVALIDATE_SCRIPT = loadScript("lua/invalidate_activity_cache.lua");
-
+    private final ActivityLocalCache activityLocalCache;
 
     private static DefaultRedisScript<Long> loadScript(String path)
     {
@@ -48,19 +48,35 @@ public class ActivityCacheStore {
                 Long.toString(ttl.toMillis())
         );
         boolean written = Long.valueOf(1L).equals(result);
-        if(!written){
+        if (written)
+        {
+            // Redis 更新成功，删除本实例可能仍持有的旧内容
+            activityLocalCache.invalidate(activityId);
+        }
+        else
+        {
             log.debug("放弃活动缓存写入，版本已变化，activityId={}", activityId);
         }
         return written;
     }
+
     public void invalidate(Long activityId)
     {
         String versionKey = RedisConstants.ACTIVITY_CACHE_VERSION_KEY_PREFIX + activityId;
         String cacheKey = RedisConstants.ACTIVITY_DETAIL_KEY_PREFIX + activityId;
 
-        stringRedisTemplate.execute(
-                INVALIDATE_SCRIPT,
-                List.of(versionKey, cacheKey)
-        );
+        activityLocalCache.invalidate(activityId);
+
+        try
+        {
+            stringRedisTemplate.execute(
+                    INVALIDATE_SCRIPT,
+                    List.of(versionKey, cacheKey)
+            );
+        }
+        finally
+        {
+            activityLocalCache.invalidate(activityId);
+        }
     }
 }

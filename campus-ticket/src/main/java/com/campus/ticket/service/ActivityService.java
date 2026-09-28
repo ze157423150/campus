@@ -1,5 +1,6 @@
 package com.campus.ticket.service;
 
+import com.campus.ticket.cache.ActivityBloomFilter;
 import com.campus.ticket.cache.ActivityCacheStore;
 import com.campus.ticket.cache.ActivityRefreshDispatcher;
 import com.campus.ticket.constants.RedisConstants;
@@ -22,6 +23,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.json.JsonMapper;
+import com.campus.ticket.cache.ActivityLocalCache;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -43,9 +45,13 @@ public class ActivityService {
     private final RedissonClient redissonClient;
     private final ActivityRefreshDispatcher activityRefreshDispatcher;
     private final ActivityCacheStore activityCacheStore;
+    private final ActivityLocalCache activityLocalCache;
+    private final ActivityBloomFilter activityBloomFilter;
 
-    public Activity findById(Long id) {
-        if (id == null || id <= 0) {
+    public Activity findById(Long id)
+    {
+        if (id == null || id <= 0)
+        {
             throw new BusinessException(
                     HttpStatus.BAD_REQUEST,
                     "INVALID_ARGUMENT",
@@ -53,40 +59,68 @@ public class ActivityService {
             );
         }
 
-        String cacheKey  = RedisConstants.ACTIVITY_DETAIL_KEY_PREFIX + id;
-        String cacheJson = stringRedisTemplate.opsForValue().get(cacheKey);
-        if(cacheJson !=null){
-            return readCachedActivity(id,cacheJson);
+        // 先查本地缓存
+        String cacheJson = activityLocalCache.get(id);
+
+        if (cacheJson != null)
+        {
+            return readCachedActivity(id, cacheJson);
         }
 
+        // 本地未命中，再查 Redis，并尝试回填本地
+        cacheJson = readRedisAndFillLocal(id);
+
+        if (cacheJson != null)
+        {
+            return readCachedActivity(id, cacheJson);
+        }
+
+        if (!activityBloomFilter.mightContain(id))
+        {
+            return null;
+        }
+
+        // 两级缓存都未命中，沿用原来的互斥重建
         String lockKey = RedisConstants.ACTIVITY_REBUILD_LOCK_PREFIX + id;
         RLock lock = redissonClient.getLock(lockKey);
         boolean acquired = false;
 
-
-        try {
+        try
+        {
             acquired = lock.tryLock(RedisConstants.ACTIVITY_REBUILD_LOCK_WAIT.toMillis(), TimeUnit.MILLISECONDS);
-            if(!acquired){
-                cacheJson = stringRedisTemplate.opsForValue().get(cacheKey);
-                if(cacheJson != null){
-                    return  readCachedActivity(id,cacheJson);
+
+            if (!acquired)
+            {
+                cacheJson = readRedisAndFillLocal(id);
+
+                if (cacheJson != null)
+                {
+                    return readCachedActivity(id, cacheJson);
                 }
+
                 throw new BusinessException(
                         HttpStatus.SERVICE_UNAVAILABLE,
                         "ACTIVITY_CACHE_BUSY",
                         "活动查询繁忙，请稍后重试"
                 );
             }
-            cacheJson = stringRedisTemplate.opsForValue().get(cacheKey);
-            if(cacheJson!= null){
-                return readCachedActivity(id,cacheJson);
+
+            // 拿到锁后再次检查，其他请求可能已经重建完成
+            cacheJson = readRedisAndFillLocal(id);
+
+            if (cacheJson != null)
+            {
+                return readCachedActivity(id, cacheJson);
             }
+
             String expectedVersion = activityCacheStore.getVersion(id);
             Activity activity = activityMapper.findById(id);
-            writeActivityCache(id, activity,expectedVersion);
-            return activity;
 
-        } catch (InterruptedException e) {
+            writeActivityCache(id, activity, expectedVersion);
+            return activity;
+        }
+        catch (InterruptedException e)
+        {
             Thread.currentThread().interrupt();
 
             throw new BusinessException(
@@ -94,8 +128,11 @@ public class ActivityService {
                     "REQUEST_INTERRUPTED",
                     "请求等待被中断，请重试"
             );
-        } finally {
-            if(acquired && lock.isHeldByCurrentThread()){
+        }
+        finally
+        {
+            if (acquired && lock.isHeldByCurrentThread())
+            {
                 lock.unlock();
             }
         }
@@ -215,6 +252,7 @@ public class ActivityService {
         return category;
     }
 
+    @Transactional
     public Long create(CreateActivityRequest request){
         UserHolder.requireAdmin();
 
@@ -234,6 +272,9 @@ public class ActivityService {
         activity.setStatus("DRAFT");
 
         activityMapper.insert(activity);
+
+        activityBloomFilter.add(activity.getId());
+
         return activity.getId();
     }
 
@@ -521,5 +562,20 @@ public class ActivityService {
         eventPublisher.publishEvent(
                 new ActivityChangedEvent(activityId)
         );
+    }
+
+    private String readRedisAndFillLocal(Long activityId)
+    {
+        long expectedVersion = activityLocalCache.currentVersion();
+
+        String cacheKey = RedisConstants.ACTIVITY_DETAIL_KEY_PREFIX + activityId;
+        String cacheJson = stringRedisTemplate.opsForValue().get(cacheKey);
+
+        if (cacheJson != null)
+        {
+            activityLocalCache.putIfUnchanged(activityId, cacheJson, expectedVersion);
+        }
+
+        return cacheJson;
     }
 }

@@ -4,6 +4,16 @@ import java.time.Duration;
 
 public final class RedisConstants {
 
+    // 场馆详情缓存：独立命名空间，避免与相同数字ID的活动相互影响。
+    public static final String VENUE_DETAIL_KEY_PREFIX = "campus:venue:public:detail:v1:";
+    public static final String VENUE_CACHE_VERSION_KEY_PREFIX = "campus:venue:cache:version:";
+    public static final String VENUE_REBUILD_LOCK_PREFIX = "campus:lock:venue:rebuild:";
+    public static final Duration VENUE_DETAIL_TTL = Duration.ofSeconds(30);
+    public static final Duration VENUE_DETAIL_TTL_JITTER = Duration.ofSeconds(10);
+    public static final Duration VENUE_DETAIL_PHYSICAL_TTL = Duration.ofMinutes(2);
+    public static final Duration VENUE_NULL_TTL = Duration.ofSeconds(10);
+    public static final Duration VENUE_REBUILD_LOCK_WAIT = Duration.ofSeconds(2);
+
     public static final String LOGIN_KEY_PREFIX = "campus:login:";
     public static final Duration LOGIN_TTL = Duration.ofDays(30);
     public static final String ACTIVITY_DETAIL_KEY_PREFIX = "campus:activity:published:detail:v3:";
@@ -47,4 +57,11 @@ public final class RedisConstants {
     public static final String RATE_LIMIT_SLIDING_KEY_PREFIX = "campus:rate-limit:sliding:";
 
     public static final String RATE_LIMIT_BUCKET_KEY_PREFIX = "campus:rate-limit:bucket:";
+
+    public static final String ACTIVITY_BLOOM_KEY = "campus:bloom:activity:v1";
+
+    public static String waitlistQuotaKey(Long activityId, Long quotaId)
+    {
+        return BOOKING_KEY_PREFIX + "{" + activityId + "}:waitlist:quota:" + quotaId;
+    }
 }

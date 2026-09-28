@@ -31,19 +31,36 @@ public class RegistrationController
     @Value("${campus.rate-limit.booking-user.max-requests:5}")
     private int bookingMaxRequests;
 
+    @Value("${campus.rate-limit.booking-api.capacity:100}")
+    private int bookingBucketCapacity;
+
+    @Value("${campus.rate-limit.booking-api.refill-per-second:50}")
+    private int bookingRefillPerSecond;
+
     @PostMapping("/{activityId}/registrations")
     public ResponseEntity<BookingAcceptedResponse> register(@PathVariable("activityId") Long activityId)
     {
         Long userId = UserHolder.getUserId();
 
-        String key = RedisConstants.RATE_LIMIT_SLIDING_KEY_PREFIX + "user:" + userId + ":booking-submit";
-        RateLimitResult result = rateLimitService.tryAcquireSlidingWindow(key, Duration.ofSeconds(bookingWindowSeconds), bookingMaxRequests);
+        // 第一层：当前用户的报名频率
+        String userKey = RedisConstants.RATE_LIMIT_SLIDING_KEY_PREFIX + "user:" + userId + ":booking-submit";
+        RateLimitResult userResult = rateLimitService.tryAcquireSlidingWindow(userKey, Duration.ofSeconds(bookingWindowSeconds), bookingMaxRequests);
 
-        if (!result.allowed())
+        if (!userResult.allowed())
         {
-            throw new RateLimitException(result.retryAfterMillis());
+            throw new RateLimitException(userResult.retryAfterMillis());
         }
 
+        // 第二层：报名接口整体的放行速度
+        String apiKey = RedisConstants.RATE_LIMIT_BUCKET_KEY_PREFIX + "api:booking-submit";
+        RateLimitResult apiResult = rateLimitService.tryAcquireTokenBucket(apiKey, bookingBucketCapacity, bookingRefillPerSecond);
+
+        if (!apiResult.allowed())
+        {
+            throw new RateLimitException(apiResult.retryAfterMillis());
+        }
+
+        // 两层检查都通过后，才执行报名
         BookingAcceptedResponse response = bookingService.submit(activityId);
         return ResponseEntity.accepted().body(response);
     }

@@ -1,0 +1,12 @@
+-- 增量迁移：新增场馆资料表，不修改既有活动和报名数据。
+CREATE TABLE IF NOT EXISTS venue (
+    id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    address VARCHAR(200) NOT NULL,
+    capacity INT NOT NULL,
+    description VARCHAR(2000) NOT NULL DEFAULT '',
+    status VARCHAR(20) NOT NULL DEFAULT 'OPEN',
+    create_time DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    update_time DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    KEY idx_venue_status_id (status, id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;

@@ -173,4 +173,14 @@ public interface ActivityMapper {
           AND status IN ('DRAFT', 'PUBLISHED')
         """)
     int cancelActivity(@Param("activityId") Long activityId);
+
+    @Select("""
+        SELECT id
+        FROM activity
+        WHERE id > #{lastId}
+        ORDER BY id
+        LIMIT #{batchSize}
+        """)
+    List<Long> findIdsForBloom(@Param("lastId") Long lastId, @Param("batchSize") int batchSize);
+
 }
