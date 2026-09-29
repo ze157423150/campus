@@ -32,6 +32,7 @@ public class WaitlistService
     private final ActivityWaitlistMapper waitlistMapper;
     private final RegistrationMapper registrationMapper;
     private final StringRedisTemplate redis;
+    private final com.campus.ticket.mapper.WaitlistWorkflowMapper workflowMapper;
 
     @Transactional
     public ActivityWaitlist join(Long activityId)
@@ -191,7 +192,10 @@ public class WaitlistService
             waitingAhead = waitlistMapper.countWaitingAhead(activityId, waitlist.getId());
         }
 
-        return new WaitlistQueryResponse(waitlist.getId(), activityId, waitlist.getStatus(), waitingAhead, waitlist.getCreateTime());
+        var offer = WaitlistStatus.OFFERED.equals(waitlist.getStatus()) ? workflowMapper.byWaitlist(waitlist.getId()) : null;
+        return new WaitlistQueryResponse(waitlist.getId(), activityId, waitlist.getStatus(), waitingAhead, waitlist.getCreateTime(),
+                offer == null ? null : offer.getId(), offer == null ? null : offer.getStatus(),
+                offer != null && "OFFERED".equals(offer.getStatus()) ? offer.getConfirmDeadline() : null);
     }
 
     @Transactional

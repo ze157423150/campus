@@ -3,6 +3,7 @@ package com.campus.ticket.constants;
 import java.time.Duration;
 
 public final class RedisConstants {
+    public static final String WAITLIST_DELAY_QUEUE = "campus:waitlist:{delay}:ready";
 
     // 场馆详情缓存：独立命名空间，避免与相同数字ID的活动相互影响。
     public static final String VENUE_DETAIL_KEY_PREFIX = "campus:venue:public:detail:v1:";

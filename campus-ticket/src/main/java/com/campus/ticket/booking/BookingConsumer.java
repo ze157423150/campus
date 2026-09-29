@@ -18,6 +18,7 @@ public class BookingConsumer
     private final BookingConsumeService bookingConsumeService;
     private final BookingRedisStore bookingRedisStore;
     private final BookingMapper bookingMapper;
+    private final com.campus.ticket.service.BookingRedisSyncService bookingRedisSyncService;
 
     @KafkaListener(
             topics = "${campus.booking.topic}",
@@ -78,15 +79,7 @@ public class BookingConsumer
                 );
             }else if (BookingOrderStatus.CANCELLED.equals(result.status()))
             {
-                bookingRedisStore.markCancelled(
-                        message.activityId(),
-                        message.userId(),
-                        message.orderId(),
-                        message.epoch(),
-                        result.registrationId()
-                );
-
-                bookingMapper.clean(message.orderId());
+                bookingRedisSyncService.synchronize(message.orderId());
 
                 log.info(
                         "已取消订单同步完成，orderId={}",

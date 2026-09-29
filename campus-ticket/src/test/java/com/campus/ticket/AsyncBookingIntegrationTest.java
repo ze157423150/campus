@@ -51,6 +51,7 @@ import static org.mockito.Mockito.*;
 @ActiveProfiles("async")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
         "campus.booking.jobs-enabled=false", "campus.booking.redis-sync-enabled=false",
+        "campus.waitlist.jobs-enabled=false",
         "logging.level.org.apache.kafka=WARN", "logging.level.com.campus.ticket.mapper=INFO"
 })
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -592,6 +593,15 @@ class AsyncBookingIntegrationTest
         }
         for (long id : activities)
         {
+            for (Long quotaId : jdbc.queryForList("SELECT id FROM waitlist_quota WHERE activity_id=?", Long.class, id))
+            {
+                jdbc.update("DELETE FROM waitlist_redis_task WHERE quota_id=?", quotaId);
+                redis.delete(RedisConstants.waitlistQuotaKey(id, quotaId));
+            }
+            jdbc.update("DELETE FROM waitlist_notification WHERE activity_id=?", id);
+            jdbc.update("DELETE o FROM waitlist_offer o JOIN activity_waitlist w ON w.id=o.waitlist_id WHERE w.activity_id=?", id);
+            jdbc.update("DELETE FROM waitlist_quota WHERE activity_id=?", id);
+            jdbc.update("DELETE FROM activity_waitlist WHERE activity_id=?", id);
             redis.delete(List.of(RedisConstants.bookingInventoryKey(id), RedisConstants.bookingRequestsKey(id), RedisConstants.bookingPendingKey(id),
                     RedisConstants.ACTIVITY_DETAIL_KEY_PREFIX + id, RedisConstants.ACTIVITY_CACHE_VERSION_KEY_PREFIX + id));
             jdbc.update("DELETE FROM booking_order_log WHERE order_id IN (SELECT order_id FROM booking_order WHERE activity_id=?)", id);

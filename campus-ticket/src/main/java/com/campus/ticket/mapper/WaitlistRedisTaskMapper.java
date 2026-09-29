@@ -62,11 +62,11 @@ public interface WaitlistRedisTaskMapper
 
     @Update("""
             UPDATE waitlist_redis_task
-            SET status = 'DONE'
+            SET status = 'DONE', result_code = #{result}
             WHERE id = #{id}
               AND status = 'PENDING'
             """)
-    int markDone(@Param("id") Long id);
+    int markDone(@Param("id") Long id, @Param("result") String result);
     @Select("""
         SELECT COUNT(*)
         FROM waitlist_redis_task

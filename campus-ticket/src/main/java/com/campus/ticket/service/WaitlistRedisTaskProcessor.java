@@ -10,6 +10,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.json.JsonMapper;
+import com.campus.ticket.dto.WaitlistReturnPayload;
+
 
 @Service
 @RequiredArgsConstructor
@@ -47,8 +49,15 @@ public class WaitlistRedisTaskProcessor
             throw new IllegalStateException("Redis同步任务状态异常，taskId=" + taskId);
         }
 
-        if (!WaitlistRedisTaskConstants.HOLD.equals(task.getOperationType())
-                || !Long.valueOf(0L).equals(task.getQuotaVersion()))
+        boolean holdTask = WaitlistRedisTaskConstants.HOLD.equals(task.getOperationType())
+                && Long.valueOf(0L).equals(task.getQuotaVersion());
+
+        boolean returnTask = WaitlistRedisTaskConstants.RETURN.equals(task.getOperationType())
+                && task.getQuotaVersion() != null && task.getQuotaVersion() > 0;
+
+        boolean transitionTask = java.util.Set.of("OFFER", "RELEASE", "CONFIRM").contains(task.getOperationType())
+                && task.getQuotaVersion() != null && task.getQuotaVersion() > 0;
+        if (!holdTask && !returnTask && !transitionTask)
         {
             throw new IllegalStateException("当前执行器不支持该任务类型或版本，taskId=" + taskId);
         }
@@ -65,11 +74,25 @@ public class WaitlistRedisTaskProcessor
             return false;
         }
 
-        WaitlistHoldPayload payload = jsonMapper.readValue(task.getPayload(), WaitlistHoldPayload.class);
+        String result = "APPLIED";
+        if (holdTask)
+        {
+            WaitlistHoldPayload payload = jsonMapper.readValue(task.getPayload(), WaitlistHoldPayload.class);
+            waitlistRedisService.hold(task.getId(), task.getQuotaId(), payload);
+        }
+        else if (returnTask)
+        {
+            WaitlistReturnPayload payload = jsonMapper.readValue(task.getPayload(), WaitlistReturnPayload.class);
+            waitlistRedisService.returnQuota(task.getId(), task.getQuotaId(), task.getQuotaVersion(), payload);
+        }
 
-        waitlistRedisService.hold(task.getId(), task.getQuotaId(), payload);
+        else
+        {
+            var payload = jsonMapper.readValue(task.getPayload(), com.campus.ticket.dto.WaitlistTransitionPayload.class);
+            result = waitlistRedisService.transition(task.getId(), task.getQuotaId(), task.getQuotaVersion(), task.getOperationType(), payload);
+        }
 
-        int completed = taskMapper.markDone(taskId);
+        int completed = taskMapper.markDone(taskId, result);
 
         if (completed == 1)
         {

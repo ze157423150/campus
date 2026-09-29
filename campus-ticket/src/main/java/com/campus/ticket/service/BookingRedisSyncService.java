@@ -13,6 +13,9 @@ public class BookingRedisSyncService
 {
     private final BookingMapper bookingMapper;
     private final BookingRedisStore bookingRedisStore;
+    private final com.campus.ticket.mapper.WaitlistQuotaMapper waitlistQuotaMapper;
+    private final com.campus.ticket.mapper.WaitlistWorkflowMapper waitlistWorkflowMapper;
+    private final WaitlistCoordinator waitlistCoordinator;
 
     // 不包数据库长事务，也不再次取消报名或归还MySQL名额。
     public void synchronize(String orderId)
@@ -40,6 +43,15 @@ public class BookingRedisSyncService
 
         if (cancelled)
         {
+            var quota = waitlistQuotaMapper.findBySourceOrderId(orderId);
+            if (quota != null)
+            {
+                waitlistCoordinator.progress(quota.getId());
+                if (waitlistWorkflowMapper.result(quota.getId(), 0L) == null)
+                    throw new IllegalStateException("名额接管尚未完成");
+                bookingMapper.clean(orderId);
+                return;
+            }
             bookingRedisStore.markCancelled(order.getActivityId(), order.getUserId(), orderId, order.getEpoch(), order.getRegistrationId());
         }
         else

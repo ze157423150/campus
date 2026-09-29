@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.json.JsonMapper;
+import com.campus.ticket.dto.WaitlistReturnPayload;
 
 @Service
 @RequiredArgsConstructor
@@ -20,6 +21,22 @@ public class WaitlistRedisTaskService
 {
     private final WaitlistRedisTaskMapper taskMapper;
     private final JsonMapper jsonMapper;
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void createTransition(WaitlistQuota quota, String operation, com.campus.ticket.dto.WaitlistTransitionPayload payload)
+    {
+        if (quota == null || quota.getId() == null || quota.getVersion() == null || quota.getVersion() <= 0
+                || operation == null || !java.util.Set.of("OFFER", "RELEASE", "CONFIRM").contains(operation)
+                || payload == null || !java.util.Objects.equals(quota.getActivityId(), payload.activityId())
+                || payload.offerId() == null || payload.userId() == null || payload.epoch() == null)
+            throw new IllegalArgumentException("候补流转任务参数不完整");
+        WaitlistRedisTask task = new WaitlistRedisTask();
+        task.setQuotaId(quota.getId());
+        task.setQuotaVersion(quota.getVersion());
+        task.setOperationType(operation);
+        task.setPayload(jsonMapper.writeValueAsString(payload));
+        if (taskMapper.insert(task) != 1) throw new IllegalStateException("创建候补同步任务失败");
+    }
 
     @Transactional(propagation = Propagation.MANDATORY)
     public Long createHoldTask(WaitlistQuota quota, BookingOrder order)
@@ -74,6 +91,45 @@ public class WaitlistRedisTaskService
         if (inserted != 1 || task.getId() == null)
         {
             throw new IllegalStateException("创建Redis名额接管任务失败");
+        }
+
+        return task.getId();
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public Long createReturnTask(WaitlistQuota quota, Long epoch)
+    {
+        if (quota == null || quota.getId() == null || quota.getId() <= 0
+                || quota.getActivityId() == null || quota.getActivityId() <= 0
+                || quota.getSourceOrderId() == null || quota.getSourceOrderId().isBlank()
+                || epoch == null || epoch <= 0)
+        {
+            throw new IllegalArgumentException("创建名额归还任务的参数不合法");
+        }
+
+        if (!WaitlistQuotaStatus.RETURNED.equals(quota.getStatus())
+                || quota.getVersion() == null || quota.getVersion() <= 0)
+        {
+            throw new IllegalStateException("名额尚未完成数据库归还状态变更");
+        }
+
+        WaitlistReturnPayload payload = new WaitlistReturnPayload(
+                quota.getActivityId(),
+                quota.getSourceOrderId(),
+                epoch
+        );
+
+        WaitlistRedisTask task = new WaitlistRedisTask();
+        task.setQuotaId(quota.getId());
+        task.setQuotaVersion(quota.getVersion());
+        task.setOperationType(WaitlistRedisTaskConstants.RETURN);
+        task.setPayload(jsonMapper.writeValueAsString(payload));
+
+        int inserted = taskMapper.insert(task);
+
+        if (inserted != 1 || task.getId() == null)
+        {
+            throw new IllegalStateException("创建Redis名额归还任务失败");
         }
 
         return task.getId();

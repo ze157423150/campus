@@ -20,7 +20,24 @@ class BookingRedisSyncTest
 {
     private final BookingMapper mapper = mock(BookingMapper.class);
     private final BookingRedisStore redis = mock(BookingRedisStore.class);
-    private final BookingRedisSyncService service = new BookingRedisSyncService(mapper, redis);
+    private final com.campus.ticket.mapper.WaitlistQuotaMapper quotas = mock(com.campus.ticket.mapper.WaitlistQuotaMapper.class);
+    private final com.campus.ticket.mapper.WaitlistWorkflowMapper workflow = mock(com.campus.ticket.mapper.WaitlistWorkflowMapper.class);
+    private final com.campus.ticket.service.WaitlistCoordinator coordinator = mock(com.campus.ticket.service.WaitlistCoordinator.class);
+    private final BookingRedisSyncService service = new BookingRedisSyncService(mapper, redis, quotas, workflow, coordinator);
+
+    @Test
+    void waitlistCancellationNeverUsesLegacyRefund()
+    {
+        when(mapper.find("A")).thenReturn(order("CANCELLED", true));
+        var quota = new com.campus.ticket.entity.WaitlistQuota();
+        quota.setId(20L);
+        when(quotas.findBySourceOrderId("A")).thenReturn(quota);
+        when(workflow.result(20L, 0L)).thenReturn("APPLIED");
+        service.synchronize("A");
+        verify(coordinator).progress(20L);
+        verifyNoInteractions(redis);
+        verify(mapper).clean("A");
+    }
 
     @Test
     void cancelledOrderSynchronizesRedisBeforeClearingMarker()

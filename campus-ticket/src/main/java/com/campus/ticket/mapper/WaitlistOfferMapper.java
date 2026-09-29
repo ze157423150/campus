@@ -18,7 +18,7 @@ public interface WaitlistOfferMapper
                 #{waitlistId},
                 #{quotaId},
                 #{sourceOrderId},
-                'OFFERED',
+                'PREPARING',
                 #{confirmDeadline}
             )
             """)

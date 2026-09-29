@@ -16,7 +16,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.awt.print.Book;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 
@@ -30,6 +29,8 @@ public class BookingCancellationService {
     private final RegistrationMapper registrationMapper;
     private final BookingMapper bookingMapper;
     private final ApplicationEventPublisher eventPublisher;
+    private final com.campus.ticket.mapper.WaitlistQuotaMapper waitlistQuotaMapper;
+    private final WaitlistRedisTaskService waitlistTasks;
 
     @Transactional
     public BookingOrder cancelInDatabase(Long activityId,String orderId){
@@ -109,12 +110,7 @@ public class BookingCancellationService {
         if(cancel!=1){
             throw new IllegalStateException("取消报名记录失败");
         }
-        //修改活动名额+1
-        int restoredRows = activityMapper.restoreQuota(activityId);
-        if (restoredRows != 1)
-        {
-            throw new IllegalStateException("归还数据库名额失败");
-        }
+        // 名额先由候补流程保留；分配失败且无人候补时才回补公开库存。
         //将已报名记录修改为
         int updatedOrders = bookingMapper.cancelSucceeded(orderId);
 
@@ -126,11 +122,18 @@ public class BookingCancellationService {
         bookingMapper.log(
                 orderId,
                 "CANCELLED",
-                "用户取消报名，等待归还Redis名额"
+                "用户取消报名，名额交由候补流程处理"
         );
         eventPublisher.publishEvent(new ActivityChangedEvent(activityId));
         order.setStatus(BookingOrderStatus.CANCELLED);
         order.setRedisDirty(true);
+        com.campus.ticket.entity.WaitlistQuota quota = new com.campus.ticket.entity.WaitlistQuota();
+        quota.setActivityId(activityId);
+        quota.setSourceOrderId(orderId);
+        quota.setStatus("HELD");
+        quota.setVersion(0L);
+        if (waitlistQuotaMapper.insert(quota) != 1) throw new IllegalStateException("创建释放名额失败");
+        waitlistTasks.createHoldTask(quota, order);
 
         return order;
     }

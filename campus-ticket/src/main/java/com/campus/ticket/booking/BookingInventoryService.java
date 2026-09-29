@@ -23,6 +23,7 @@ public class BookingInventoryService {
     private final ActivityMapper activityMapper;
     private final BookingMapper bookingMapper;
     private final BookingRedisStore bookingRedisStore;
+    private final com.campus.ticket.mapper.WaitlistWorkflowMapper waitlistWorkflowMapper;
 
     @Transactional
     public void initialize(Long activityId){
@@ -67,6 +68,10 @@ public class BookingInventoryService {
         }
 
         List<Map<String, Object>> rows = bookingMapper.owners(activityId);
+        if (waitlistWorkflowMapper.heldCount(activityId) > 0)
+        {
+            throw new BusinessException(HttpStatus.CONFLICT, "WAITLIST_INVENTORY_HELD", "存在候补保留名额，不能按普通报名人数重新初始化库存");
+        }
         Map<Long, String> registeredOwners = new HashMap<>();
 
         for (Map<String, Object> row : rows)

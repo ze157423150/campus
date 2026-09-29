@@ -12,6 +12,7 @@ public class WaitlistRedisTask
     private String operationType;
     private String payload;
     private String status;
+    private String resultCode;
     private Integer attempts;
     private LocalDateTime nextAttemptTime;
     private LocalDateTime createTime;

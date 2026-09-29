@@ -7,7 +7,10 @@ public record WaitlistQueryResponse(
         Long activityId,
         String status,
         Long waitingAhead,
-        LocalDateTime createTime
+        LocalDateTime createTime,
+        Long offerId,
+        String offerStatus,
+        LocalDateTime confirmDeadline
 )
 {
 }

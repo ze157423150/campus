@@ -24,6 +24,7 @@ public class BookingConsumeService
     private final RegistrationMapper registrationMapper;
     private final BookingMapper bookingMapper;
     private final ApplicationEventPublisher eventPublisher;
+    private final com.campus.ticket.mapper.WaitlistWorkflowMapper waitlistWorkflowMapper;
 
     @Transactional
     public BookingConsumeResult  consume(BookingMessage message)
@@ -162,6 +163,8 @@ public class BookingConsumeService
         );
 
         eventPublisher.publishEvent(new ActivityChangedEvent(activityId));
+        // 普通报名成功后，退出尚未获邀的排队记录。
+        waitlistWorkflowMapper.removeWaiting(activityId, userId);
 
         return BookingConsumeResult.succeeded(registrationId);
     }

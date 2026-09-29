@@ -44,4 +44,14 @@ public interface WaitlistQuotaMapper
           AND version = #{expectedVersion}
         """)
     int markOffered(@Param("quotaId") Long quotaId, @Param("offerId") Long offerId, @Param("expectedVersion") Long expectedVersion);
+
+    @Update("""
+        UPDATE waitlist_quota
+        SET status = 'RETURNED',
+            version = version + 1
+        WHERE id = #{quotaId}
+          AND status = 'HELD'
+          AND version = #{expectedVersion}
+        """)
+    int markReturned(@Param("quotaId") Long quotaId, @Param("expectedVersion") Long expectedVersion);
 }
