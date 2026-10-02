@@ -15,8 +15,8 @@ Content-Type: application/json
 GET {{baseUrl}}/activities/{{demoActivityId}}/management
 Authorization: Bearer {{adminToken}}
 
-### 发布
-POST {{baseUrl}}/activities/{{demoActivityId}}/publish
+### 发布并初始化 Redis 报名库存
+POST {{baseUrl}}/activities/{{demoActivityId}}/publish-with-inventory
 Authorization: Bearer {{adminToken}}
 
 ### 搜索
@@ -25,11 +25,15 @@ GET {{baseUrl}}/activities?keyword=篮球&category=SPORTS&registrationPhase=OPEN
 ### 详情
 GET {{baseUrl}}/activities/{{demoActivityId}}
 
-### 报名；重复发送返回409
+### 异步报名；受理返回202，随后查询订单
 POST {{baseUrl}}/activities/{{demoActivityId}}/registrations
 Authorization: Bearer {{studentToken}}
 
-> {% if (response.status === 200) client.global.set("demoRegistrationId", response.body.registrationId); %}
+> {% if (response.status === 202) client.global.set("demoOrderId", response.body.orderId); %}
+
+### 查询订单；等到 SUCCEEDED 后再进行取消
+GET {{baseUrl}}/activities/{{demoActivityId}}/booking-orders/{{demoOrderId}}
+Authorization: Bearer {{studentToken}}
 
 ### 我的报名
 GET {{baseUrl}}/users/me/registrations?status=REGISTERED
@@ -40,10 +44,10 @@ GET {{baseUrl}}/activities/{{demoActivityId}}/registrations
 Authorization: Bearer {{adminToken}}
 
 ### 个人取消；重复发送仍成功
-POST {{baseUrl}}/activities/registrations/{{demoRegistrationId}}/cancel
+POST {{baseUrl}}/activities/{{demoActivityId}}/booking-orders/{{demoOrderId}}/cancel
 Authorization: Bearer {{studentToken}}
 
-### 可回到报名请求验证重新报名，然后取消整个活动
+### 管理员取消活动；异步订单批量同步尚未完善，见 docs/limitations.md
 POST {{baseUrl}}/activities/{{demoActivityId}}/cancel
 Authorization: Bearer {{adminToken}}
 

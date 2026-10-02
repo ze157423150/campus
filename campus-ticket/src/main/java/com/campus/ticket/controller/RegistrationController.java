@@ -4,16 +4,16 @@ import com.campus.ticket.booking.BookingAcceptedResponse;
 import com.campus.ticket.booking.BookingService;
 import com.campus.ticket.constants.RedisConstants;
 import com.campus.ticket.context.UserHolder;
+import com.campus.ticket.dto.BookingSubmitRequest;
+import com.campus.ticket.dto.BookingSubmitResponse;
 import com.campus.ticket.dto.RateLimitResult;
 import com.campus.ticket.exception.RateLimitException;
+import com.campus.ticket.service.BookingSubmissionService;
 import com.campus.ticket.service.RateLimitService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 import java.time.Duration;
 
@@ -22,8 +22,7 @@ import java.time.Duration;
 @RequestMapping("/activities")
 public class RegistrationController
 {
-    private final BookingService bookingService;
-    private final RateLimitService rateLimitService;
+    private final BookingSubmissionService bookingSubmissionService;    private final RateLimitService rateLimitService;
 
     @Value("${campus.rate-limit.booking-user.window-seconds:10}")
     private long bookingWindowSeconds;
@@ -38,7 +37,7 @@ public class RegistrationController
     private int bookingRefillPerSecond;
 
     @PostMapping("/{activityId}/registrations")
-    public ResponseEntity<BookingAcceptedResponse> register(@PathVariable("activityId") Long activityId)
+    public ResponseEntity<BookingSubmitResponse> register(@PathVariable("activityId") Long activityId, @RequestBody(required = false) BookingSubmitRequest request)
     {
         Long userId = UserHolder.getUserId();
 
@@ -61,7 +60,15 @@ public class RegistrationController
         }
 
         // 两层检查都通过后，才执行报名
-        BookingAcceptedResponse response = bookingService.submit(activityId);
-        return ResponseEntity.accepted().body(response);
+        boolean joinWaitlistIfFull = request != null && request.joinWaitlistIfFull();
+
+        BookingSubmitResponse response = bookingSubmissionService.submit(activityId, joinWaitlistIfFull);
+
+        if ("BOOKING".equals(response.type()))
+        {
+            return ResponseEntity.accepted().body(response);
+        }
+
+        return ResponseEntity.ok(response);
     }
 }

@@ -1,7 +1,9 @@
 # 候补递补与名额回流：按一次取消流程读代码
 
+配套阅读：[状态字典](data-model.md)、[报名 API](booking-api.md)、[同步恢复](booking-redis-recovery.md)。本篇重点解释已成功报名后的取消与候补；入口现已支持 `joinWaitlistIfFull=true` 满额自动候补。
+
 ## 先运行什么
-本次测试已在当前配置的 MySQL 执行增量脚本 `sql/20260928_waitlist_complete.sql`：保留用户原有表、补上任务的 result_code、创建站内通知表，没有清空业务数据。
+候补增量脚本为 `sql/20260928_waitlist_complete.sql`，包含任务 result_code 与站内通知表。历史测试环境已经执行；新环境请先按 [启动说明](setup.md) 初始化。
 其他数据库先依次具备原业务表与异步报名表，再执行这个脚本。脚本支持重复执行，不重建已有表。
 使用 IDEA 重启应用，并继续启用已有的 `async` profile。后台候补任务及延迟队列组件均在该 profile 下启动。
 候补确认时间在 application-async.properties 中配置，默认300秒；实际截止时间不晚于报名截止或活动开始。
@@ -70,7 +72,7 @@ OCCUPIED也是“本次分配尝试已处理”的结果，推进Redis版本，�
 数据库随后关闭无效邀请，取消该候补，继续下一位，不发送错误通知。
 
 OFFER成功后，advance将PREPARING激活为OFFERED，使用数据库当前时间设置确认截止时间。
-邀请激活与站内通知一起提交。提交后发布WaitlistOfferReadyEvent，Redisson延迟队列收到邀请ID。
+邀请激活与站内通知一起提交。事务内发布 WaitlistOfferReadyEvent，AFTER_COMMIT 监听器在提交后向 Redisson 延迟队列加入邀请 ID。
 Redis保留先完成，通知后生成，避免用户收到通知却没有名额。
 
 ### 第五步：B超时
@@ -99,6 +101,7 @@ Redis CONFIRM 将 `u:C = w:邀请ID` 转换为正式订单ID，建立成功订�
 ### 如果C也不确认且没人候补
 RELEASE完成后，advance找不到WAITING用户：
 数据库quota=RETURNED/version+1，activity.remaining_quota+1，创建RETURN任务，同事务提交。
+例外：管理员取消活动的旧逻辑已重置数据库活动库存时，不再重复增加数据库库存；这不代表管理员取消的全部异步订单同步已经完善，见 [功能边界](limitations.md)。
 `waitlist_return.lua` 核对HELD和旧版本，公开库存+1并保存任务回执。
 Redis已成功但数据库任务标记失败，再执行也不会多加库存。
 
@@ -112,8 +115,7 @@ Redis已成功但数据库任务标记失败，再执行也不会多加库存。
 活动结束/取消后停止通知新的候补，关闭邀请并处理释放。等待队列也会清理。
 Redis永久数据丢失/手工改坏库存时只保留失败任务并记录日志，不凭空猜测库存；有保留名额时禁止用原初始化接口重建。
 
-RDelayedQueue已被官方标记弃用，本项目按学习目标使用已有开源API，辅以数据库补漏，不声称具有消息确认语义。
-参考：[Redisson队列文档](https://redisson.pro/docs/data-and-services/queues/)。
+当前代码使用 Redisson 延迟队列，并辅以数据库补漏；队列消费不具有本项目实现的逐条确认协议。不要把延迟触发本身当作唯一可靠的超时凭据。
 
 ## API顺序
 所有用户接口都需要 `Authorization: Bearer <token>`，用户ID从登录上下文获取。
@@ -142,7 +144,9 @@ PREPARING邀请不可确认或放弃，等待准备结束后再操作；后台�
 7. WaitlistWorkflowService.returnToPublic：无人候补时数据库库存回补。
 8. WaitlistWorkflowService.confirm：C确认，注意没有deductQuota。
 
-## 已执行验证
+## 历史验证与最近增量
+
+下面 10 项及 49 项总数是早期候补版本的历史记录。2026-09-30 增加自动候补验证后，专项执行为候补集成 14 项、报名编排单元测试 7 项，共 21 项通过。该轮 Kafka 投递被隔离，详见 [测试说明](testing.md)。
 真实MySQL/Redis/HTTP集成测试10项通过：
 - 无候补取消回补一次、HOLD/RETURN旧任务重放；
 - FIFO、重复加入、退出重排、放弃递补、确认后再次取消；

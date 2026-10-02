@@ -1,47 +1,39 @@
-# 校园活动预约平台
+# 校园活动票务与预约平台
 
-面向校园讲座、文体赛事、社团活动的后端学习项目。目前为同步报名的基础版本：Spring Boot、MyBatis、MySQL，Redis用于登录会话与活动详情缓存。没有支付、Kafka异步订单、Lua名额预扣或Caffeine多级缓存。
+面向校园讲座、文体赛事和社团活动的后端学习项目。使用 Spring Boot、MyBatis、MySQL、Redis、Lua、Kafka、Caffeine 和 Redisson，实现活动管理、异步报名、满额自动候补、候补邀请确认和超时递补。
 
-## 运行
+## 已实现的主要能力
 
-1. 准备 JDK 17或更高版本、Maven、MySQL 8、Redis。IDEA启用Lombok注解处理。
-2. 新环境创建 `campus_ticket` 数据库，执行 `sql/schema.sql`。已有开发库不要重建；当前开发库已完成category迁移。
-3. 在本地配置 `src/main/resources/application.properties` 的数据库、Redis连接信息。也可在IDEA运行配置中用环境变量覆盖：`SPRING_DATASOURCE_URL`、`SPRING_DATASOURCE_USERNAME`、`SPRING_DATASOURCE_PASSWORD`、`SPRING_DATA_REDIS_HOST`、`SPRING_DATA_REDIS_PORT`、`SPRING_DATA_REDIS_PASSWORD`。不要将实际密码发布到公开仓库。
-4. 在IDEA运行 `CampusTicketApplication`，访问 `http://localhost:8081/health`。端口以实际 `server.port` 配置为准。
-5. 用 `requests/account-registration.http` 注册并登录。普通注册只能生成STUDENT账号。首次管理员请先注册专用账号，再由数据库维护者执行 `UPDATE campus_user SET role='ADMIN' WHERE student_no='替换为专用管理员学号';`，确认影响行数为1。项目不内置默认管理员密码。
-6. 使用 `requests/activity-lifecycle.http` 创建、发布活动并完成报名与取消。请求文件中的Token和账号占位值需要自行替换。
+| 模块 | 当前实现 |
+| --- | --- |
+| 基础业务 | 注册登录、个人资料、密码修改、活动与场馆管理、报名查询 |
+| 流量控制 | Redis + Lua 滑动窗口、令牌桶；IP、用户及报名接口粒度 |
+| 多级缓存 | Caffeine L1 + Redis L2；活动布隆过滤器、空值缓存、互斥锁、逻辑过期和异步重建 |
+| 异步报名 | Redis 原子预占、立即投递 Kafka、定时补投、消费幂等、订单日志和 Redis 同步补偿 |
+| 候补递补 | 满额自动候补、FIFO 分配、限时确认、Redisson 延迟队列、数据库扫描补偿、无人候补时回流公开库存 |
 
-本项目暂不需要前端即可演示。时间字段使用服务器本地时间，示例格式为 `2026-10-01T14:00:00`；演示时应改为合适的未来日期。
+普通报名受理成功不代表已落库，需要查询订单状态。候补确认直接通过数据库事务生成成功报名，再同步 Redis，不重新走普通抢票的 Kafka 链路。
 
-## 接口与业务
+## 文档入口
 
-- [完整接口清单及活动规则](docs/backend-api.md)
-- [账号与报名查询](docs/account-registration-api.md)
-- [分类、关键词与报名阶段筛选](docs/activity-search-api.md)
+从 [文档导航](docs/README.md) 开始。首次阅读建议按以下顺序：
 
-活动生命周期为 DRAFT → PUBLISHED → CANCELLED，草稿也可直接取消。只有草稿可编辑，取消后不再发布。报名在REGISTERED和CANCELLED之间转换；重新报名复用原记录，因此create_time是首次报名记录的创建时间。
+1. [环境与启动](docs/setup.md)
+2. [完整 API 清单](docs/backend-api.md) 与 [报名、候补接口说明](docs/booking-api.md)
+3. [架构与代码导航](docs/architecture.md)
+4. [数据与状态字典](docs/data-model.md) 与 [候补流程详解](docs/waitlist-flow-guide.md)
+5. [测试与证据](docs/testing.md)、[演示流程](docs/demo.md)、[功能边界与待办](docs/limitations.md)
 
-报名、个人取消、管理员取消活动均在数据库事务中先锁活动行，再修改报名与名额。同一活动的写操作会串行等待；当前保证正确性，但热门活动存在行锁竞争，这是后续优化的基线。
+请求示例位于 [requests](requests)。无需付费 HTTP Client，可使用 Postman、Apifox 或 PowerShell，见演示文档。
 
-## 自动验证
+## 快速运行
 
-集成测试连接配置中的真实MySQL和Redis，使用随机HTTP端口，只创建和清理自己的测试数据。请在开发/测试库运行，勿指向生产库。正常结束后清理测试记录；进程强制终止可能遗留测试数据。数据库自增序列不会回退。
+准备 JDK 17+、Maven、MySQL、Redis 和 Kafka。新库先执行 `sql/schema.sql`，再执行异步报名及候补建表脚本，详细顺序见启动文档。配置连接信息后，在 IDEA 启用 `async` profile，运行 `CampusTicketApplication`。
 
-PowerShell执行：
+默认健康检查：`GET http://localhost:8081/health`。首次管理员由数据库维护者将指定已注册账号的 `role` 改为 `ADMIN`。创建活动后使用 `publish-with-inventory` 接口发布并初始化 Redis 库存。
 
-```powershell
-$env:CAMPUS_INTEGRATION_TESTS = 'true'
-try {
-    mvn '-Dmaven.compiler.proc=full' test
-} finally {
-    Remove-Item Env:CAMPUS_INTEGRATION_TESTS -ErrorAction SilentlyContinue
-}
-```
+## 验证口径
 
-`proc=full`用于在较新JDK上显式启用Lombok注解处理。未开启该环境变量时业务集成测试跳过，原有contextLoads测试仍会启动Spring上下文。测试包括账号权限、密码失效、筛选分页、活动生命周期、取消和重新报名，以及同时争抢名额/重复报名。
+最近已有记录的自动候补验证为 2026-09-30：7 项单元测试与 14 项候补集成测试通过。该候补集成测试隔离了 Kafka 投递，不能作为真实 Kafka 全链路测试证据。真实 Kafka 功能及性能记录保存在 2026-09-26、2026-09-27 的历史报告中。
 
-并发正确性测试不代表吞吐量测试，目前没有宣称任何QPS或性能提升数字。
-
-## 后续学习路线
-
-先固定测试环境并记录同步报名的吞吐量、P95/P99延迟、成功/失败数量及数据库状态；随后逐步学习Redis与Lua原子预扣、Kafka异步落库、消费幂等、失败补偿和状态查询。每一步都保留正确性验证与同条件性能对比。尚未实现的设计不作为已完成成果写入简历。
+当前仍存在跨实例 L1 主动失效、管理员取消活动的异步订单批量同步等待完善项，见功能边界文档。

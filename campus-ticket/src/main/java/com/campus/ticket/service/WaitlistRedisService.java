@@ -93,7 +93,15 @@ public class WaitlistRedisService
         args.put("userId", payload.userId().toString());
         if (payload.orderId() != null) args.put("orderId", payload.orderId());
         if (payload.registrationId() != null) args.put("registrationId", payload.registrationId().toString());
-        String result = redis.execute(TRANSITION_SCRIPT, List.of(RedisConstants.bookingInventoryKey(payload.activityId()), RedisConstants.bookingRequestsKey(payload.activityId()), RedisConstants.waitlistQuotaKey(payload.activityId(), quotaId)), taskId.toString(), quotaId.toString(), Long.toString(version - 1), version.toString(), operation, jsonMapper.writeValueAsString(args));
+        String result = redis.execute(
+                TRANSITION_SCRIPT,
+                List.of(RedisConstants.bookingInventoryKey(payload.activityId()),
+                RedisConstants.bookingRequestsKey(payload.activityId()),
+                RedisConstants.waitlistQuotaKey(payload.activityId(), quotaId)),
+                taskId.toString(), quotaId.toString(), Long.toString(version - 1),
+                version.toString(),
+                operation,
+                jsonMapper.writeValueAsString(args));
         if (!"APPLIED".equals(result) && !("OFFER".equals(operation) && "OCCUPIED".equals(result)))
         {
             throw new IllegalStateException("候补Redis流转未完成，taskId=" + taskId + ", result=" + result);

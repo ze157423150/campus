@@ -8,6 +8,7 @@
         <version>4.1.1</version>
         <relativePath/> <!-- lookup parent from repository -->
     </parent>
+    <version>1.0.0</version>
     <groupId>com.campus</groupId>
     <artifactId>campus-ticket</artifactId>
     <version>0.0.1-SNAPSHOT</version>

@@ -3,7 +3,7 @@
 基础地址：`http://localhost:8081`。JSON 请求使用 `Content-Type: application/json`。
 需要登录的接口使用 `Authorization: Bearer <token>`。
 
-## 本次变更
+## 功能与兼容说明
 
 - 新增学生注册、查询/修改个人资料、修改密码。
 - 新增管理员分页查询活动报名名单。
@@ -25,7 +25,7 @@
 | GET | `/users/me/registrations` | 登录用户 | 200 |
 | GET | `/activities/{activityId}/registrations` | ADMIN | 200 |
 
-现有 `/auth/me`、`/auth/logout`、报名与取消接口保留。
+`/auth/me`、`/auth/logout` 同样可用；管理员创建学生使用 `POST /admin/users`。当前报名及取消使用异步订单接口，详见 [完整 API 清单](backend-api.md) 和 [报名说明](booking-api.md)，不要使用旧的按 registrationId 取消路径。
 
 ## 注册
 

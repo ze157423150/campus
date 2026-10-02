@@ -65,4 +65,13 @@ public final class RedisConstants {
     {
         return BOOKING_KEY_PREFIX + "{" + activityId + "}:waitlist:quota:" + quotaId;
     }
+
+    public static final String PARTICIPATION_LOCK_PREFIX = "campus:lock:participation:";
+
+    public static final Duration PARTICIPATION_LOCK_WAIT = Duration.ofSeconds(1);
+
+    public static String participationLockKey(Long activityId, Long userId)
+    {
+        return PARTICIPATION_LOCK_PREFIX + activityId + ":" + userId;
+    }
 }

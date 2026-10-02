@@ -117,6 +117,7 @@ public class WaitlistWorkflowService
             events.publishEvent(new WaitlistOfferReadyEvent(offer.getId(), deadline));
             return false;
         }
+        //超时后执行的分支
         if ("OFFERED".equals(offer.getStatus()))
         {
             LocalDateTime now = db.now();
@@ -157,6 +158,7 @@ public class WaitlistWorkflowService
             registration.setUserId(userId);
             requireOne(registrations.insert(registration));
         }
+        //曾经报名过但是取消了，会走这个分支修改报名状态
         else requireOne(registrations.reactivate(registration.getId()));
 
         BookingOrder source = orders.find(quota.getSourceOrderId());

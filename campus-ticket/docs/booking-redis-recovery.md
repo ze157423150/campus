@@ -1,54 +1,41 @@
-# 取消及超时订单的 Redis 自动同步
+# Redis 同步与中断恢复
 
-## 流程
+## 哪些操作需要补偿
 
-1. 取消事务更新报名、归还 MySQL 名额，将订单设为 `CANCELLED`、`redis_dirty=1`、`next_check_time=NOW(3)`。
-2. 数据库提交后，接口立即调用 `BookingRedisSyncService.synchronize(orderId)`。
-3. Lua 同步成功再清除 `redis_dirty`。正常响应为 HTTP 200，`redisSyncStatus=COMPLETED`。
-4. 立即同步异常时，返回 HTTP 202，订单仍为 `CANCELLED`，`redisSyncStatus=PENDING`。用户不必再次取消。
-5. `BookingRedisSyncJob` 定期查询已到重试时间的脏终态订单，用条件 UPDATE 领取，再同步 Redis。
-6. 失败保持脏标记；领取前已推迟重试时间，即使进程停止，恢复后仍可再次领取。
+MySQL 事务不能同时原子提交 Redis。代码先提交正式业务结果及同步标记/任务，再尝试 Redis；任务保存在数据库，应用恢复后可继续处理。
 
-后台只同步 Redis，不再次执行 MySQL 取消或归还数据库名额。`FAILED/EXPIRED` 订单也复用已有 Lua 补偿。
+| 场景 | 恢复入口 | 处理方式 |
+| --- | --- | --- |
+| 预占后立即投递未完成 | BookingDispatchJob | 扫描各活动 pending，claim 后补投 Kafka |
+| 消费数据库提交后 Redis 未同步 | BookingRedisSyncJob | 扫描终态 redis_dirty=1 订单，领取后调用 synchronize |
+| 取消后名额接管中断 | 上述同步任务、WaitlistRecoveryJob | 根据来源订单找到 quota，重放 HOLD 并继续推进 |
+| OFFER/RELEASE/CONFIRM/RETURN 同步中断 | WaitlistRecoveryJob | 重放 PENDING Redis 任务，按版本及回执幂等执行 |
+| 延迟队列消息遗漏或处理时中断 | WaitlistRecoveryJob | 扫描活跃 quota/邀请，重新检查时间与业务状态 |
+| Kafka 消费异常 | 消费重试及死信处理 | 检查错误和死信，不应视为所有异常都能自动成功恢复 |
 
-## 配置
+## synchronize 的分支
 
-激活 `async` profile 后启用，默认每轮结束 5 秒后再扫描，每轮最多 50 条，领取后至少等待 30 秒才可重新领取。
+`BookingRedisSyncService.synchronize` 根据数据库订单终态选择处理：成功同步正式报名结果；失败执行 markFailed；取消时先检查是否有来源 quota。有 quota 时调用协调器接管名额，确认初始 HOLD 任务已完成后再 clean 原订单同步标记；没有 quota 时走旧数据兼容的 markCancelled。
 
-```properties
-campus.booking.redis-sync-enabled=true
-campus.booking.redis-sync-delay-ms=5000
-campus.booking.redis-sync-initial-delay-ms=5000
-campus.booking.redis-sync-batch-size=50
-campus.booking.redis-sync-retry-seconds=30
-```
+因此这个类负责所有订单终态同步，不仅是取消业务。`bookingMapper.clean(orderId)` 清除的是数据库 redis_dirty，不是删除报名记录或 Redis requests。
 
-这个开关独立于 Kafka 投递开关 `campus.booking.jobs-enabled`。无需新增表或字段，复用 `redis_dirty`、`next_check_time` 和已有索引。
+## 候补协调循环
 
-## 并发与恢复
+1. 优先查当前 quota 的待执行同步任务，按重试时间领取。
+2. HOLD 将 A 的取消结果同步 Redis，把名额交给候补流程，不增加公开库存。
+3. 没有待同步任务时 advance 根据 quota 状态分配 B，建立 PREPARING 邀请及 OFFER 任务。
+4. OFFER Lua 预占 B；如果 B 已有占用，返回 OCCUPIED，advance 结束该邀请后继续寻找候补。
+5. 成功占用后 advance 激活 OFFERED、记录通知并发布事件，等待确认或超时。
+6. B 确认产生 CONFIRM；拒绝/超时产生 RELEASE；无人可分配产生 RETURN。
 
-- 多实例可能查询到相同订单，但条件 UPDATE 只有一个实例能成功；过了重试时间才允许再次领取。
-- 领取时间是临时占用，不是严格的全程互斥。接口、消费者、后台任务仍可能重叠执行，最终由已有 Lua 保证重复补偿不多退名额。
-- Redis 成功、MySQL 清除标记失败时，标记仍在，重复执行 Lua 后再清除即可。
-- 已清除标记的订单由 Service 跳过。
-- 单条订单失败不会阻止同批其他订单处理。
-- Redis 数据缺失或状态异常时，任务保留标记并输出异常，不凭空恢复库存。此类问题仍需核对数据；本功能不是全量对账或 Redis 数据灾难恢复。
+循环有次数上限，不会在一次 HTTP 请求里无限等待。尚未完成的持久化任务由后台继续处理。RELEASE 只清理本次邀请的占用并恢复待分配状态；RETURN 才回补公开库存。
 
-## 人工验证
+## 任务周期
 
-针对一个独立测试活动，正常报名成功后，在 `BookingCancellationController` 中调用 `cancelInDatabase` 的下一行打断点（暂停当前请求线程），此时数据库事务已提交。
+async profile 当前订单 Redis 同步约每 5 秒执行一次，每批最多 50 条，失败后按重试时间再次处理。候补恢复约每 3 秒执行，延迟队列消费者约每 200 毫秒轮询。参数以 application-async.properties 和各 Job 注解为准。领取任务会延后可重试时间，因此恢复并不总在下一次扫描立即发生。
 
-1. 观察订单已为 `CANCELLED`，数据库名额归还一次，`redis_dirty=1`。
-2. 不继续该 HTTP 请求，保持后台线程运行。
-3. 等待后台扫描，确认日志出现“订单Redis后台同步完成”、Redis 状态变为 `CANCELLED`、名额仅归还一次、`redis_dirty=0`。
-4. 恢复请求线程，重复同步应跳过或幂等完成，不再次归还名额。
+## 排查顺序
 
-若需要验证重启恢复，可在同一断点位置停止实例，随后重启 `async` 实例。只要没有其他实例已处理，该持久化脏标记会被重新扫描；不需要重发取消请求。
+先查 booking_order 的 status、redis_dirty、失败原因和日志；再查来源 waitlist_quota 的 status/version/offer_id；检查该 quota 的 waitlist_redis_task 状态、重试时间与 result_code；最后核对 Redis epoch、用户占用、quota 版本及 pending。使用只读查询保留现场，不直接将任务批量标 DONE。
 
-```sql
-SELECT order_id, status, redis_dirty, next_check_time
-FROM booking_order
-WHERE order_id = '实际订单编号';
-```
-
-定时频率不等于完成时限；批量积压、存储故障、调度延迟都会影响实际恢复时间。
+这些任务属于业务补偿扫描，并非全量账本核对或 Redis 灾难恢复。Redis 整库丢失、数据被手工覆盖、永久数据库错误或任务载荷损坏仍需专门处理。公开活动缓存中的剩余数也可能短暂滞后，不应拿缓存快照直接证明实时库存不一致。

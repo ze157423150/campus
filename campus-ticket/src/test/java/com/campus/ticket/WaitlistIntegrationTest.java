@@ -53,6 +53,9 @@ class WaitlistIntegrationTest
     @Autowired WaitlistRedisTaskProcessor processor;
     @Autowired WaitlistRedisService waitlistRedis;
     @MockitoBean ActivityBloomFilter bloom;
+    // Keep this suite isolated from live Kafka consumers; exercise Redis and MySQL for real.
+    @MockitoBean BookingDispatchService dispatch;
+    @Autowired BookingSubmissionService submission;
 
     final String run = UUID.randomUUID().toString().substring(0,8);
     final List<Long> activities = new ArrayList<>();
@@ -383,6 +386,118 @@ class WaitlistIntegrationTest
         stock(f,0);
     }
 
+    String tokenFor(int index) throws Exception
+    {
+        var response = http("POST", "/auth/login", null, Map.of("studentNo", "wl_" + run + "_" + index, "password", "FixtureTest123!"));
+        assertEquals(200, response.statusCode(), response.body());
+        String token = json.readTree(response.body()).path("token").asText();
+        tokens.add(token);
+        return token;
+    }
+
+    @Test
+    void autoWaitlistAvailableSeatUsesNormalBooking() throws Exception
+    {
+        Fixture f = fixture(2);
+        var response = http("POST", "/activities/" + f.activityId() + "/registrations", tokenFor(1), Map.of("joinWaitlistIfFull", true));
+        assertEquals(202, response.statusCode(), response.body());
+        var body = json.readTree(response.body());
+        assertEquals("BOOKING", body.path("type").asText());
+        assertEquals("PENDING", body.path("status").asText());
+        String orderId = body.path("orderId").asText();
+        assertFalse(orderId.isBlank());
+        assertEquals(orderId, redis.opsForHash().get(RedisConstants.bookingInventoryKey(f.activityId()), "u:" + users.get(1)));
+        assertEquals("0", redis.opsForHash().get(RedisConstants.bookingInventoryKey(f.activityId()), "quota"));
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM activity_waitlist WHERE activity_id=?", Integer.class, f.activityId()));
+        org.mockito.Mockito.verify(dispatch).dispatchImmediately(f.activityId(), orderId);
+
+        // Verify the accepted request can still complete via the existing consumer logic.
+        var message = json.readValue(bookingRedis.findRequestJson(f.activityId(), orderId), BookingMessage.class);
+        var consumed = consumer.consume(message);
+        assertEquals("SUCCEEDED", consumed.status());
+        bookingRedis.markSucceeded(message, consumed.registrationId());
+        stock(f, 0);
+    }
+
+    @Test
+    void soldOutAutoWaitlistCanReceiveAndConfirmInvitation() throws Exception
+    {
+        Fixture f = fixture(1);
+        String token = tokenFor(2);
+        String path = "/activities/" + f.activityId() + "/registrations";
+        var first = http("POST", path, token, Map.of("joinWaitlistIfFull", true));
+        assertEquals(200, first.statusCode(), first.body());
+        var body = json.readTree(first.body());
+        assertEquals("WAITLIST", body.path("type").asText());
+        assertEquals("WAITING", body.path("status").asText());
+        long waitlistId = body.path("waitlistId").asLong();
+        assertTrue(waitlistId > 0);
+        var repeat = http("POST", path, token, Map.of("joinWaitlistIfFull", true));
+        assertEquals(200, repeat.statusCode(), repeat.body());
+        assertEquals(waitlistId, json.readTree(repeat.body()).path("waitlistId").asLong());
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM activity_waitlist WHERE activity_id=? AND user_id=?", Integer.class, f.activityId(), users.get(2)));
+        assertNull(redis.opsForHash().get(RedisConstants.bookingInventoryKey(f.activityId()), "u:" + users.get(2)));
+        org.mockito.Mockito.verifyNoInteractions(dispatch);
+
+        WaitlistQuota q = cancelAndProgress(f);
+        WaitlistOffer offer = current(q.getId());
+        assertEquals("OFFERED", offer.getStatus());
+        var confirmed = http("POST", "/waitlist-offers/" + offer.getId() + "/confirm", token, null);
+        assertEquals(200, confirmed.statusCode(), confirmed.body());
+        assertEquals("SUCCEEDED", json.readTree(confirmed.body()).path("status").asText());
+        assertEquals("CONFIRMED", offers.findById(offer.getId()).getStatus());
+        assertEquals("CONSUMED", db.quota(q.getId()).getStatus());
+        stock(f, 0);
+    }
+
+    @Test
+    void soldOutWithoutOptInPreservesOldApiBehavior() throws Exception
+    {
+        Fixture f = fixture(1);
+        String token = tokenFor(3);
+        String path = "/activities/" + f.activityId() + "/registrations";
+        for (Object body : Arrays.asList(null, Map.of("joinWaitlistIfFull", false)))
+        {
+            var response = http("POST", path, token, body);
+            assertEquals(409, response.statusCode(), response.body());
+            assertEquals("QUOTA_EXHAUSTED", json.readTree(response.body()).path("code").asText());
+        }
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM activity_waitlist WHERE activity_id=?", Integer.class, f.activityId()));
+        org.mockito.Mockito.verifyNoInteractions(dispatch);
+        stock(f, 0);
+    }
+
+    @Test
+    void concurrentSoldOutSubmissionsCreateOneWaitlistRecord() throws Exception
+    {
+        Fixture f = fixture(1);
+        ExecutorService pool = Executors.newFixedThreadPool(4);
+        try
+        {
+            List<Callable<Long>> calls = new ArrayList<>();
+            for (int i = 0; i < 8; i++)
+            {
+                calls.add(() ->
+                {
+                    login(1);
+                    try
+                    {
+                        var result = submission.submit(f.activityId(), true);
+                        assertEquals("WAITLIST", result.type());
+                        return result.waitlistId();
+                    }
+                    finally { UserHolder.removeUser(); }
+                });
+            }
+            Set<Long> ids = new HashSet<>();
+            for (Future<Long> future : pool.invokeAll(calls, 20, TimeUnit.SECONDS)) ids.add(future.get());
+            assertEquals(1, ids.size());
+            assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM activity_waitlist WHERE activity_id=? AND user_id=?", Integer.class, f.activityId(), users.get(1)));
+            stock(f, 0);
+        }
+        finally { pool.shutdownNow(); }
+    }
+
     java.net.http.HttpResponse<String> http(String method,String path,String token,Object body) throws Exception
     {
         var builder=java.net.http.HttpRequest.newBuilder(java.net.URI.create("http://localhost:"+port+path)).timeout(Duration.ofSeconds(15));
@@ -433,7 +548,11 @@ class WaitlistIntegrationTest
             ready.delete();
         }
         for(String token:tokens) redis.delete(RedisConstants.LOGIN_KEY_PREFIX+token);
-        for(Long user:users) jdbc.update("DELETE FROM campus_user WHERE id=?",user);
+        for(Long user:users)
+        {
+            redis.delete(RedisConstants.RATE_LIMIT_SLIDING_KEY_PREFIX + "user:" + user + ":booking-submit");
+            jdbc.update("DELETE FROM campus_user WHERE id=?",user);
+        }
         System.out.println("WAITLIST_IT fixtures cleaned: "+run);
     }
 }
