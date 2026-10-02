@@ -16,12 +16,12 @@
 
 ## 文档入口
 
-从 [文档导航](docs/README.md) 开始。首次阅读建议按以下顺序：
+从 [文档导航](campus-ticket/docs/README.md) 开始。首次阅读建议按以下顺序：
 
-1. [环境与启动](docs/setup.md)
-2. [完整 API 清单](docs/backend-api.md) 与 [报名、候补接口说明](docs/booking-api.md)
-3. [架构与代码导航](docs/architecture.md)
-4. [数据与状态字典](docs/data-model.md) 与 [候补流程详解](docs/waitlist-flow-guide.md)
+1. [环境与启动](campus-ticket/docs/setup.md)
+2. [完整 API 清单](campus-ticket/docs/backend-api.md) 与 [报名、候补接口说明](campus-ticket/docs/booking-api.md)
+3. [架构与代码导航](campus-ticket/docs/architecture.md)
+4. [数据与状态字典](campus-ticket/docs/data-model.md) 与 [候补流程详解](campus-ticket/docs/waitlist-flow-guide.md)
 
 请求示例位于 [requests](requests)。无需付费 HTTP Client，可使用 Postman、Apifox 或 PowerShell，见演示文档。
 
