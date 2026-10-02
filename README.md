@@ -23,7 +23,7 @@
 3. [架构与代码导航](campus-ticket/docs/architecture.md)
 4. [数据与状态字典](campus-ticket/docs/data-model.md) 与 [候补流程详解](campus-ticket/docs/waitlist-flow-guide.md)
 
-请求示例位于 [requests](requests)。无需付费 HTTP Client，可使用 Postman、Apifox 或 PowerShell，见演示文档。
+请求示例位于 [requests](campus-ticket/requests)。无需付费 HTTP Client，可使用 Postman、Apifox 或 PowerShell，见演示文档。
 
 ## 快速运行
 
