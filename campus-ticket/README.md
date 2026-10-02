@@ -22,7 +22,6 @@
 2. [完整 API 清单](docs/backend-api.md) 与 [报名、候补接口说明](docs/booking-api.md)
 3. [架构与代码导航](docs/architecture.md)
 4. [数据与状态字典](docs/data-model.md) 与 [候补流程详解](docs/waitlist-flow-guide.md)
-5. [测试与证据](docs/testing.md)、[演示流程](docs/demo.md)、[功能边界与待办](docs/limitations.md)
 
 请求示例位于 [requests](requests)。无需付费 HTTP Client，可使用 Postman、Apifox 或 PowerShell，见演示文档。
 
@@ -32,8 +31,3 @@
 
 默认健康检查：`GET http://localhost:8081/health`。首次管理员由数据库维护者将指定已注册账号的 `role` 改为 `ADMIN`。创建活动后使用 `publish-with-inventory` 接口发布并初始化 Redis 库存。
 
-## 验证口径
-
-最近已有记录的自动候补验证为 2026-09-30：7 项单元测试与 14 项候补集成测试通过。该候补集成测试隔离了 Kafka 投递，不能作为真实 Kafka 全链路测试证据。真实 Kafka 功能及性能记录保存在 2026-09-26、2026-09-27 的历史报告中。
-
-当前仍存在跨实例 L1 主动失效、管理员取消活动的异步订单批量同步等待完善项，见功能边界文档。

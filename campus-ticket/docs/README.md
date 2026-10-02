@@ -18,12 +18,6 @@
 | 演示项目 | [演示步骤](demo.md) |
 | 判断简历描述是否准确 | [边界与待办](limitations.md) |
 
-## 历史证据
-
-- [2026-09-26 Kafka 功能报告](async-booking-test-report-20260926.md)
-- [2026-09-27 定时投递性能报告](async-booking-load-test-report-20260927.md)
-- [2026-09-27 立即投递对比](async-booking-immediate-load-report-20260927.md)
-- 原始数据：[定时投递](async-booking-load-results-20260927.json)、[立即投递](async-booking-immediate-load-results-20260927.json)
 
 ## 维护约定
 
